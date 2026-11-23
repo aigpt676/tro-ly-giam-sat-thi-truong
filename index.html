@@ -170,9 +170,9 @@ textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:
 
   <div class="composerWrap">
     <div class="composer">
-      <textarea id="input" placeholder="Nhập điều kiện muốn theo dõi..." rows="2"></textarea>
+      <textarea id="input" placeholder="Hỏi RSI, giá, EMA, hoặc nhập điều kiện muốn giám sát..." rows="2"></textarea>
       <div class="composerFoot">
-        <span>Chỉ giám sát điều kiện · Không tự đặt lệnh</span>
+        <span>Hỏi dữ liệu MT5 hoặc tạo nhiệm vụ giám sát · Không tự đặt lệnh</span>
         <button class="send" onclick="sendMessage()">Gửi ↑</button>
       </div>
     </div>
@@ -224,10 +224,11 @@ const getApiKey = () => localStorage.getItem("openai_api_key") || "";
 function openApiSettings(){ $("apiModal").style.display="flex"; $("apiKeyInput").value=getApiKey(); $("apiKeyInput").focus(); }
 function closeApiSettings(){ $("apiModal").style.display="none"; }
 function saveApiKey(){ const key=$("apiKeyInput").value.trim(); if(!key){addMessage("bot","Bố chưa nhập API Key.");return;} localStorage.setItem("openai_api_key",key); closeApiSettings(); addMessage("bot","Đã lưu OpenAI API Key trên trình duyệt này. AI đã sẵn sàng."); }
-async function askAI(userText){
+async function askAI(userText, marketSnapshot=null){
   const key=getApiKey(); if(!key){openApiSettings();throw new Error("Chưa có OpenAI API Key. Nhập Key trong nút ⚙ AI API trước.");}
-  const system=`Bạn là trợ lý AI của ứng dụng giám sát thị trường. KHÔNG phân tích thị trường, KHÔNG dự đoán giá, KHÔNG tạo BUY/SELL, KHÔNG đặt lệnh. Chỉ giúp người dùng tạo nhiệm vụ giám sát điều kiện hoặc trả lời về cách dùng ứng dụng. Nếu yêu cầu là theo dõi điều kiện, trả về JSON duy nhất: {"action":"monitor","title":"...","description":"...","rule":{"type":"rsi","symbol":"XAUUSDm|BTCUSDm|USDJPYm","tf":"M1|M5|M15|M30|H1|H4|D1","threshold":number,"operator":">=|<=|cross"}} hoặc rule cross {"type":"cross","symbol":"...","tf":"...","direction":"up|down|both"}. RSI touch/đạt mức: dùng operator cross. RSI trên/đạt/vượt: >=; dưới/xuống dưới: <=. Chỉ chấp nhận RSI14 hoặc EMA9 RSI14 giao cắt WMA45 RSI14. Nếu thiếu mã hoặc timeframe hoặc mức RSI thì action clarify. Với câu hỏi không phải tạo nhiệm vụ, action chat và reply. Schema: {"action":"monitor|clarify|chat","title":"","description":"","rule":{},"reply":""}. Trả lời bằng JSON hợp lệ, không markdown.`;
-  const res=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:AI_MODEL,temperature:0.1,response_format:{type:"json_object"},messages:[{role:"system",content:system},{role:"user",content:userText}]})});
+  const system=`Bạn là trợ lý AI của ứng dụng giám sát thị trường. KHÔNG đặt lệnh, KHÔNG tạo BUY/SELL, KHÔNG dự đoán giá. Nếu người dùng hỏi dữ liệu hiện tại (giá, RSI14, EMA9 RSI14, WMA45 RSI14, giao cắt) hãy trả lời action chat và chỉ dùng dữ liệu snapshot MT5 được cung cấp; nêu rõ khung thời gian và nếu thiếu dữ liệu thì nói không có, tuyệt đối không tự bịa. Nếu yêu cầu tạo nhiệm vụ giám sát, trả về action monitor với rule RSI hoặc cross theo schema: {"action":"monitor","title":"...","description":"...","rule":{"type":"rsi","symbol":"XAUUSDm|BTCUSDm|USDJPYm","tf":"M1|M5|M15|M30|H1|H4|D1","threshold":number,"operator":">=|<=|cross"}} hoặc rule cross {"type":"cross","symbol":"...","tf":"...","direction":"up|down|both"}. RSI chạm mức dùng cross; RSI trên/đạt/vượt dùng >=; dưới/xuống dưới dùng <=. Chỉ hỗ trợ RSI14 hoặc EMA9 RSI14 giao cắt WMA45 RSI14. Nếu thiếu mã/timeframe/mức thì action clarify. Schema JSON: {"action":"monitor|clarify|chat","title":"","description":"","rule":{},"reply":""}. Trả JSON hợp lệ, không markdown.`;
+  const snapshot=marketSnapshot ? JSON.stringify(marketSnapshot) : "Chưa có dữ liệu MT5 snapshot.";
+  const res=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:JSON.stringify({model:AI_MODEL,temperature:0.1,response_format:{type:"json_object"},messages:[{role:"system",content:system},{role:"system",content:"DỮ LIỆU MT5 HIỆN TẠI (JSON): "+snapshot},{role:"user",content:userText}]})});
   const data=await res.json(); if(!res.ok) throw new Error(data.error?.message||("OpenAI HTTP "+res.status)); const raw=data.choices?.[0]?.message?.content||"{}"; return JSON.parse(raw);
 }
 function addTaskFromAI(ai,original){
@@ -379,7 +380,7 @@ function parseTask(text){
 
 async function createTaskFromText(text){
   try{
-    const ai=await askAI(text);
+    const ai=await askAI(text,marketData);
     if(ai.action==="monitor"){ addTaskFromAI(ai,text); return true; }
     if(ai.action==="clarify"){ addMessage("bot",ai.reply||"Bố cần nói rõ mã giao dịch, khung thời gian hoặc điều kiện RSI."); return false; }
     addMessage("bot",ai.reply||"Con chỉ hỗ trợ tạo và quản lý nhiệm vụ giám sát trong ứng dụng."); return false;
