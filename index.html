@@ -367,5 +367,53 @@ if("Notification" in window && Notification.permission==="default"){
   // Xin quyền chỉ khi người dùng bấm nút gửi hoặc tạo nhiệm vụ, không tự bật popup.
 }
 </script>
+ <script>
+(() => {
+    const MT5_URL = "http://127.0.0.1:8765/api/mt5";
+
+    async function checkMT5() {
+        try {
+            const res = await fetch(MT5_URL, {
+                cache: "no-store"
+            });
+
+            const data = await res.json();
+
+            const connected = data.connected && data.terminal_connected;
+
+            // Cập nhật trạng thái kết nối trên giao diện
+            document.querySelectorAll("*").forEach(el => {
+                if (el.children.length !== 0) return;
+
+                const text = el.textContent.trim();
+
+                if (text === "MT5 chưa kết nối") {
+                    el.textContent = connected
+                        ? "MT5 đã kết nối"
+                        : "MT5 chưa kết nối";
+                    el.style.color = connected ? "#22c55e" : "#94a3b8";
+                }
+
+                if (text === "Chưa kết nối") {
+                    el.textContent = connected
+                        ? "Đã kết nối"
+                        : "Chưa kết nối";
+                }
+            });
+
+            if (connected) {
+                console.log("MT5 CONNECTED", data);
+                window.MT5_DATA = data;
+            }
+
+        } catch (error) {
+            console.log("MT5 Bridge chưa truy cập được:", error.message);
+        }
+    }
+
+    checkMT5();
+    setInterval(checkMT5, 3000);
+})();
+</script>
 </body>
 </html>
