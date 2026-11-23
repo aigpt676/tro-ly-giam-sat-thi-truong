@@ -212,101 +212,201 @@ function createTask(){
 }
 
 function parseTask(text){
-  const s=text.toUpperCase();
-  let symbol="XAUUSDm";
-  if(s.includes("BTC"))symbol="BTCUSDm";
-  else if(s.includes("USDJPY"))symbol="USDJPYm";
-  else if(s.includes("XAU")||s.includes("GOLD"))symbol="XAUUSDm";
+  const s = text.toUpperCase();
 
-  let tf="M1";
-  for(const t of ["M1","M5","M15","M30","H1","H4","D1"])if(s.includes(t))tf=t;
+  let symbol = "XAUUSDm";
+  if(s.includes("BTC")) symbol = "BTCUSDm";
+  else if(s.includes("USDJPY")) symbol = "USDJPYm";
 
-  const match=s.match(/RSI(?:14)?\s*(?:H1|M1|M5|M15|M30|H4|D1)?\s*(?:CHẠM|ĐẠT|VƯỢT|TRÊN|>=|>|XUỐNG|DƯỚI|<=|<)\s*(\d+(?:\.\d+)?)/);
-  if(match){
-    const threshold=Number(match[1]);
-    const lower=s.includes("XUỐNG")||s.includes("DƯỚI")||s.includes("<");
-    return {description:`${symbol} ${tf} RSI14 ${lower?"xuống dưới":"vượt"} ${threshold}`,rule:{type:"rsi",symbol,tf,threshold,operator:lower?"<":">"}};
+  let tf = "M1";
+  const tfMatch = s.match(/\b(M1|M5|M15|M30|H1|H4|D1)\b/);
+  if(tfMatch) tf = tfMatch[1];
+
+  // RSI chạm / vượt / trên / dưới mức
+  const rsiMatch = s.match(/RSI(?:14)?[\s\S]*?(?:CHẠM MỨC|CHẠM|ĐẠT|VƯỢT|TRÊN|XUỐNG DƯỚI|DƯỚI|>=|<=|>|<)\s*(\d+(?:\.\d+)?)/);
+
+  if(rsiMatch){
+    const threshold = Number(rsiMatch[1]);
+    const lower = /XUỐNG DƯỚI|DƯỚI|<=|</.test(s);
+
+    return {
+      description: `${symbol} ${tf} RSI14 ${lower ? "dưới" : "chạm/vượt"} ${threshold}`,
+      rule: {
+        type: "rsi",
+        symbol,
+        tf,
+        threshold,
+        operator: lower ? "<=" : ">="
+      }
+    };
   }
-  if(s.includes("CẮT")||s.includes("GIAO CẮT")||s.includes("CROSS")){
-    const down=s.includes("CẮT XUỐNG")||s.includes("SELL")||s.includes("GIẢM");
-    return {description:`${symbol} ${tf} EMA9 RSI ${down?"cắt xuống":"cắt lên"} WMA45 RSI`,rule:{type:"cross",symbol,tf,direction:down?"down":"up"}};
+
+  // EMA9 của RSI14 giao cắt WMA45 của RSI14
+  if(s.includes("EMA9") && s.includes("WMA45")){
+    let direction = "both";
+
+    if(s.includes("CẮT LÊN") || s.includes("GIAO CẮT LÊN"))
+      direction = "up";
+
+    if(s.includes("CẮT XUỐNG") || s.includes("GIAO CẮT XUỐNG"))
+      direction = "down";
+
+    return {
+      description: `${symbol} ${tf} EMA9 RSI giao cắt WMA45 RSI`,
+      rule: {
+        type: "cross",
+        symbol,
+        tf,
+        direction
+      }
+    };
   }
-  return {description:text,rule:{type:"text",text}};
+
+  return {
+    description: text,
+    rule: {
+      type: "text",
+      text
+    }
+  };
 }
 
 function evaluateTask(t){
-  if(!t.enabled||!marketData||!t.rule)return false;
-  const r=t.rule;
-  if(r.type==="rsi"){
-    const d=marketData.market?.[r.symbol]?.timeframes?.[r.tf];
-    if(!d||d.rsi14==null)return false;
-    return r.operator==="<"?d.rsi14<r.threshold:d.rsi14>r.threshold;
+  if(!t.enabled || !marketData || !t.rule) return false;
+
+  const r = t.rule;
+  const d = marketData.market?.[r.symbol]?.timeframes?.[r.tf];
+
+  if(!d) return false;
+
+  if(r.type === "rsi"){
+    if(d.rsi14 == null) return false;
+
+    if(r.operator === "<=")
+      return d.rsi14 <= r.threshold;
+
+    return d.rsi14 >= r.threshold;
   }
-  if(r.type==="cross"){
-    const d=marketData.market?.[r.symbol]?.timeframes?.[r.tf];
-    if(!d)return false;
-    const prevE=d.rsi_ema9_prev,prevW=d.rsi_wma45_prev,curE=d.rsi_ema9,curW=d.rsi_wma45;
-    if([prevE,prevW,curE,curW].some(x=>x==null))return false;
-    return r.direction==="up"?(prevE<=prevW&&curE>curW):(prevE>=prevW&&curE<curW);
+
+  if(r.type === "cross"){
+    const prevE = d.rsi_ema9_prev;
+    const prevW = d.rsi_wma45_prev;
+    const curE = d.rsi_ema9;
+    const curW = d.rsi_wma45;
+
+    if([prevE,prevW,curE,curW].some(x => x == null))
+      return false;
+
+    const crossUp = prevE <= prevW && curE > curW;
+    const crossDown = prevE >= prevW && curE < curW;
+
+    if(r.direction === "up") return crossUp;
+    if(r.direction === "down") return crossDown;
+
+    return crossUp || crossDown;
   }
+
   return false;
 }
 
 function checkTasks(){
-  tasks.forEach(t=>{
-    if(evaluateTask(t)){
-      const key=t.id;
-      const stamp=Date.now();
-      if(!alerted[key]||stamp-alerted[key]>60000){
-        alerted[key]=stamp;
-        addMessage("bot","⚠️ ĐIỀU KIỆN ĐÃ ĐẠT\n"+t.title+"\nThời điểm: "+nowText());
-        if("Notification" in window && Notification.permission==="granted"){
-          new Notification("Cảnh báo thị trường",{body:t.title});
-        }
+  tasks.forEach(t => {
+    const triggered = evaluateTask(t);
+
+    if(!triggered){
+      t._active = false;
+      return;
+    }
+
+    // Chỉ báo một lần khi điều kiện vừa xảy ra
+    if(t._active) return;
+
+    t._active = true;
+
+    const message =
+      "⚠️ ĐIỀU KIỆN GIÁM SÁT ĐÃ XẢY RA\n\n" +
+      t.title +
+      "\nThời điểm: " + nowText();
+
+    addMessage("bot", message);
+
+    if("Notification" in window){
+      if(Notification.permission === "granted"){
+        new Notification("Cảnh báo giám sát", {
+          body: t.title
+        });
       }
     }
   });
 }
 
-async function poll(){
-  try{
-    const res=await fetch(BRIDGE_URL+"?t="+Date.now(),{cache:"no-store"});
-    if(!res.ok)throw new Error("HTTP "+res.status);
-    const data=await res.json();
-    if(!data.connected)throw new Error(data.error||"MT5 chưa kết nối");
-    marketData=data;
-    $("mtDot").className="dot green";
-    $("mtStatus").textContent="MT5 đã kết nối";
-    $("accountStatus").textContent="Đã kết nối";
-    $("accountStatus").style.color="#10b981";
-    $("balance").textContent=money(data.account.balance)+" "+data.account.currency;
-    $("equity").textContent=money(data.account.equity)+" "+data.account.currency;
-    $("floating").textContent=money(data.account.floating_profit);
-    $("today").textContent=money(data.account.today_profit);
-    $("footerStatus").textContent="MT5 đang cập nhật · "+new Date(data.updated_at||Date.now()).toLocaleTimeString()+" · Không tự đặt lệnh";
-    checkTasks();
-  }catch(e){
-    $("mtDot").className="dot red";
-    $("mtStatus").textContent="MT5 chưa kết nối";
-    $("accountStatus").textContent="Chưa kết nối";
-    $("footerStatus").textContent="Không kết nối Bridge: "+e.message+" · Mở MT5 và chạy py mt5_bridge.py";
+function quick(text){
+  $("input").value = text;
+  sendMessage();
+}
+
+function sendMessage(){
+  const text = $("input").value.trim();
+  if(!text) return;
+
+  $("input").value = "";
+  addMessage("user",text);
+
+  const s = text.toUpperCase();
+
+  if(
+    s.includes("THEO DÕI") ||
+    s.includes("BÁO KHI") ||
+    s.includes("GIÁM SÁT") ||
+    s.includes("RSI") ||
+    s.includes("EMA9") ||
+    s.includes("WMA45")
+  ){
+    const p = parseTask(text);
+
+    if(p.rule.type === "text"){
+      addMessage(
+        "bot",
+        "Con chưa nhận diện được điều kiện tự động từ câu này. Bố hãy ghi rõ mã sản phẩm, khung thời gian và điều kiện RSI hoặc giao cắt EMA9 RSI/WMA45 RSI."
+      );
+      return;
+    }
+
+    tasks.push({
+      id: Date.now(),
+      title: text,
+      description: p.description,
+      enabled: true,
+      rule: p.rule,
+      _active: false
+    });
+
+    saveTasks();
+
+    addMessage(
+      "bot",
+      "Đã tạo nhiệm vụ giám sát.\n\n" +
+      p.description +
+      "\n\nNhiệm vụ đang bật. Con sẽ kiểm tra điều kiện từ dữ liệu MT5 khi Bridge hoạt động."
+    );
+
+    // Xin quyền thông báo trình duyệt khi người dùng chủ động tạo nhiệm vụ
+    if("Notification" in window && Notification.permission === "default"){
+      Notification.requestPermission();
+    }
+
+    return;
   }
-}
-setInterval(poll,POLL_MS);
-poll();
-renderTasks();
 
-function addMessage(type,text){
-  $("welcome").style.display="none";
-  const div=document.createElement("div");
-  div.className="msg "+(type==="user"?"user":"bot");
-  div.textContent=text;
-  const time=document.createElement("time");time.textContent=nowText();
-  div.appendChild(time);
-  $("chat").appendChild(div);
-  $("chat").scrollTop=$("chat").scrollHeight;
+  addMessage(
+    "bot",
+    "Con đang hoạt động ở chế độ giám sát điều kiện thị trường. Bố hãy nhập điều kiện muốn theo dõi, ví dụ: Báo khi RSI chạm mức 60 của khung H1."
+  );
 }
 
+function fmt(n){
+  return n == null ? "N/A" : Number(n).toFixed(2);
+}
 function quick(text){$("input").value=text;sendMessage()}
 
 function sendMessage(){
