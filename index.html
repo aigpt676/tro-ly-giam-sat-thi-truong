@@ -322,10 +322,19 @@ function evaluateTask(t){
   }
   return false;
 }
+async function sendTelegramAlert(message){
+  try{
+    const res=await fetch("http://127.0.0.1:8765/api/telegram",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message})});
+    const data=await res.json();
+    if(!res.ok||!data.ok) addMessage("bot","⚠️ Không gửi được Telegram: "+(data.error||res.status));
+    else addMessage("bot","📨 Đã gửi cảnh báo qua Telegram.");
+  }catch(e){addMessage("bot","⚠️ Lỗi gửi Telegram: "+e.message);}
+}
 function checkTasks(){
   tasks.forEach(t=>{const triggered=evaluateTask(t);if(!triggered){t._active=false;return;}if(t._active)return;t._active=true;
     const message="⚠️ ĐIỀU KIỆN GIÁM SÁT ĐÃ ĐẠT\n\n"+t.title+"\nThời điểm: "+nowText();addMessage("bot",message);
     if("Notification" in window&&Notification.permission==="granted")new Notification("Cảnh báo giám sát",{body:t.title});
+    sendTelegramAlert(message);
   });localStorage.setItem("market_tasks",JSON.stringify(tasks));
 }
 async function poll(){
